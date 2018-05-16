@@ -1,0 +1,82 @@
+import numpy as np
+import math
+from keras.initializations import normal, identity
+from keras.models import model_from_json, load_model
+#from keras.engine.training import collect_trainable_weights
+from keras.models import Sequential
+from keras.layers import Dense, Flatten, Input, merge, Lambda, Reshape, MaxPooling2D, Activation, Convolution2D, BatchNormalization, Flatten
+from keras.models import Sequential, Model
+from keras.optimizers import Adam
+import keras.backend as K
+import tensorflow as tf
+K.set_learning_phase(1)
+# K._LEARNING_PHASE = tf.constant(0)
+
+HIDDEN1_UNITS = 300
+HIDDEN2_UNITS = 600
+
+class CriticNetwork(object):
+    def __init__(self, sess, state_size, action_size, BATCH_SIZE, TAU, LEARNING_RATE):
+        self.sess = sess
+        self.BATCH_SIZE = BATCH_SIZE
+        self.TAU = TAU
+        self.LEARNING_RATE = LEARNING_RATE
+        self.action_size = action_size
+        
+        K.set_session(sess)
+
+        #Now create the model
+        self.model, self.action, self.state = self.create_critic_network(state_size, action_size)  
+        self.target_model, self.target_action, self.target_state = self.create_critic_network(state_size, action_size)  
+        self.action_grads = tf.gradients(self.model.output, self.action)  #GRADIENTS for policy update
+        self.sess.run(tf.global_variables_initializer())
+
+    def gradients(self, states, actions):
+        return self.sess.run(self.action_grads, feed_dict={
+            self.state: states,
+            self.action: actions
+        })[0]
+
+    def target_train(self):
+        critic_weights = self.model.get_weights()
+        critic_target_weights = self.target_model.get_weights()
+        for i in range(len(critic_weights)):
+            critic_target_weights[i] = self.TAU * critic_weights[i] + (1 - self.TAU)* critic_target_weights[i]
+        self.target_model.set_weights(critic_target_weights)
+
+    def create_critic_network(self, state_size,action_dim):
+        print("Critic model: state_size", state_size, "action_dim", action_dim)
+        S = Input(shape = state_size)
+        # S_in = Lambda(lambda a: a / 255.0)(S)
+        #S1 = Lambda(lambda img: img[:,-64*64*3:])(S)
+        #S_in = Reshape((64,64,3))(S1)
+        batch_norm0 = BatchNormalization()(S)
+        conv1 = Convolution2D(16, nb_row=4, nb_col=4, subsample=(4,4), activation='relu')(batch_norm0)
+        batch_norm1 = BatchNormalization()(conv1)
+        conv2 = Convolution2D(32, nb_row=4, nb_col=4, subsample=(2,2), activation='relu')(batch_norm1)
+        batch_norm2 = BatchNormalization()(conv2)
+        conv3 = Convolution2D(32, nb_row=4, nb_col=4, subsample=(2,2), activation = 'relu')(batch_norm2)
+        batch_norm3 = BatchNormalization()(conv3)
+        flat = Flatten()(batch_norm3)
+        # conv1 = Convolution2D(64, 5, 5, border_mode='same', activation='relu')(batch_norm0)
+        # batch_norm1 = BatchNormalization()(conv1)
+        # pool1 = MaxPooling2D(pool_size=(2, 2))(batch_norm1)
+        # conv2 = Convolution2D(64, 5, 5, border_mode='same', activation='relu')(pool1)
+        # pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+        # conv3 = Convolution2D(128, 5, 5, border_mode='same', activation='relu')(pool2)
+        # batch_norm2 = BatchNormalization()(conv3)
+        # conv4 = Convolution2D(256, 5, 5, border_mode='same', activation='relu')(batch_norm2)
+        # pool3 = MaxPooling2D(pool_size=(2, 2))(conv4)
+        # flat = Flatten()(pool3)
+
+        A = Input(shape=[action_dim],name='action2')   
+        w1 = Dense(HIDDEN1_UNITS, activation='relu')(flat)
+        a1 = Dense(HIDDEN2_UNITS, activation='linear')(A) 
+        h1 = Dense(HIDDEN2_UNITS, activation='linear')(w1)
+        h2 = merge([h1,a1],mode='sum')    
+        h3 = Dense(HIDDEN2_UNITS, activation='relu')(h2)
+        V = Dense(action_dim,activation='linear')(h3)   
+        model = Model(input=[S,A],output=V)
+        adam = Adam(lr=self.LEARNING_RATE)
+        model.compile(loss='mse', optimizer=adam)
+        return model, A, S 
